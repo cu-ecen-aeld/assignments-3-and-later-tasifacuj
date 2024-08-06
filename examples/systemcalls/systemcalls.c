@@ -1,5 +1,15 @@
 #include "systemcalls.h"
 
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <string.h>
+#include <errno.h>
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -16,8 +26,8 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
-    return true;
+    int retval = system( cmd );
+    return retval == 0;
 }
 
 /**
@@ -58,10 +68,40 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    bool result = true;
+    pid_t pid = fork();
 
+    if( pid == -1 ){
+        goto end;
+    }else if( pid == 0 ){
+        // child
+        printf( "\n\t>> child starts command: %s\n", command[ 0 ] );
+        // int ret;
+        execv( command[ 0 ], command );
+        exit( EXIT_FAILURE );
+    }
+
+    int status;
+    int waitRet = waitpid (pid, &status, 0);
+    printf( "wait result for %s, %i\n", command[0], waitRet );
+
+    if ( waitRet == -1){
+        result = false;
+    }else if (WIFEXITED (status)){
+        printf( "exit status for %s, %i\n", command[0], WEXITSTATUS (status) );
+        
+        if( WEXITSTATUS (status) == 0 ){
+            result = true;
+        }else{
+            result = false;
+        }
+    }else{
+        result = false;
+    }
+
+end:
     va_end(args);
-
-    return true;
+    return result;
 }
 
 /**
@@ -92,8 +132,59 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    // fprintf( stderr, "\n\n> launch %s\n", command[ 0 ] );
+    int result = true;
+    int fd = open( outputfile, O_WRONLY | O_CREAT, 644 );
 
+    if( fd < 0 ){
+        fprintf( stderr, "Failed to open %s\n", outputfile );
+        result = false;
+        goto end;
+    }
+
+    fflush(stdout);
+    pid_t pid = fork();
+
+    if( pid == -1 ){
+        result = false;
+        goto end;
+    }else if( pid == 0 ){
+        // child
+        if( dup2( fd, 1 ) < 0 ){
+            fprintf( stderr, "error: %s\n", strerror( errno ) );
+            exit( EXIT_FAILURE );    
+        }
+
+        if( dup2( fd, 2 ) < 0 ){
+            fprintf( stderr, "error: %s\n", strerror( errno ) );
+            exit( EXIT_FAILURE );    
+        }
+
+        close( fd );
+        // int ret;
+        execv( command[ 0 ], command );
+        exit( EXIT_FAILURE );
+    }    
+
+    close( fd );
+    int status;
+    int waitRet = waitpid (pid, &status, 0);
+    // printf( "wait result for %s, %i\n", command[0], waitRet );
+
+    if ( waitRet == -1){
+        result = false;
+    }else if (WIFEXITED (status)){
+        // printf( "exit status for %s, %i\n", command[0], WEXITSTATUS (status) );
+        
+        if( WEXITSTATUS (status) == 0 ){
+            result = true;
+        }else{
+            result = false;
+        }
+    }else{
+        result = false;
+    }
+end:
     va_end(args);
-
-    return true;
+    return result;
 }
