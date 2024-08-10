@@ -36,6 +36,14 @@ if [ ! -d "${OUTDIR}/linux-stable" ]; then
 	echo "CLONING GIT LINUX STABLE VERSION ${KERNEL_VERSION} IN ${OUTDIR}"
 	git clone ${KERNEL_REPO} --depth 1 --single-branch --branch ${KERNEL_VERSION}
 fi
+
+echomsg "Fixing dtc-lexer"
+
+ sed -i '/YYLTYPE yylloc;/d' $OUTDIR/linux-stable/scripts/dtc/dtc-lexer.l || {
+    echoerr "Failed to apply lex patch $FINDER_APP_DIR/../above.patch"
+ }
+
+
 if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     cd linux-stable
     echo "Checking out version ${KERNEL_VERSION}"
@@ -49,12 +57,12 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
 
     echomsg "make all"
-    make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all
+    make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all
 
     # echomsg "make modules"
     # make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules
 
-    echomsg "make devicetree"
+    # echomsg "make devicetree"
     # make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs
 
     # echo ">>> tmp stop"
@@ -101,7 +109,7 @@ test -f ${OUTDIR}/rootfs/bin/busybox || {
     echomsg "Make and install busybox"
     make distclean
     make defconfig
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu-
+    make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu-
     make CONFIG_PREFIX="${OUTDIR}/rootfs" ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- install
 } 
 
@@ -156,3 +164,4 @@ cp "$FINDER_APP_DIR/autorun-qemu.sh" "${OUTDIR}/rootfs/home"
 cd "${OUTDIR}/rootfs"
 find . | cpio -H newc -ov --owner root:root > "${OUTDIR}/initramfs.cpio"
 gzip -f "${OUTDIR}/initramfs.cpio"
+echomsg "manual-linux.sh completed"
