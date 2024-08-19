@@ -18,4 +18,4 @@ fi
 
 Y=$(grep -r "$PAT" $DIR | awk -F ':' '{print $1}' | wc -l)
 X=$(grep -r "$PAT" $DIR | awk -F ':' '{print $1}' | uniq | wc -l)
-echo "The number of files are $X and the number of matching lines are $Y"
+echo "The number of files are $X and the number of matching lines are $Y" 
