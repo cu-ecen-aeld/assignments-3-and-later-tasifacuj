@@ -1,8 +1,7 @@
 #include "aesdsocket.h"
 #include "aesdsocket_cfg.h"
 #include <string.h>
-#include	<sys/types.h>	/* basic system data types */
-#include	<sys/socket.h>	/* basic socket definitions */
+#include <sys/socket.h>	/* basic socket definitions */
 #include <netinet/in.h>
 #include <signal.h>
 #include <poll.h>
@@ -17,6 +16,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <arpa/inet.h>
+#include <stdlib.h>
 
 static char buf[ MAXLINE ];
 
@@ -24,10 +24,10 @@ static struct sockaddr_in cliaddr, servaddr;
 static int maxi, listenfd, connfd, sockfd;
 static int nready;
 static  socklen_t clilen;
-ssize_t				n;
-static int log_fd = -1;
-static int file_size = 0;
-static const int		on = 1;
+static ssize_t      n;
+static int          log_fd = -1;
+static int          file_size = 0;
+static const int	on = 1;
 
 #define  OPEN_MAX 256
 static struct pollfd client[OPEN_MAX];
@@ -35,9 +35,10 @@ static struct pollfd client[OPEN_MAX];
 
 static void log_remote_peer_name( int client_sock, bool is_open );
 static void process_message( int clientfd, char const* buf, int len );
+static void make_daemon();
 static void dump_file_to_client( int fd );
-static char const* filename_ = NULL;
 
+static char const* filename_ = NULL;
 volatile sig_atomic_t sigint_triggered = 0;
 volatile sig_atomic_t sigterm_triggered = 0;
 
@@ -53,7 +54,7 @@ void aesd_signal_triggered( int sig ){
     }
 }
 
-bool aesd_initialize( char const* filename ){
+bool aesd_initialize( char const* filename, bool is_daemon ){
     filename_ = filename;
     log_fd = open( filename, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR );
 
@@ -81,8 +82,11 @@ bool aesd_initialize( char const* filename ){
         return false;
     }
 
-    listen( listenfd, LISTENQ );
+    if( is_daemon ){
+        make_daemon();
+    }
 
+    listen( listenfd, LISTENQ );
     client[0].fd = listenfd;
     client[0].events = POLLIN;
     
@@ -169,7 +173,7 @@ void aesd_run(){
                     process_message( sockfd, buf, n );
                 }
 
-                if (--nready <= 0){
+                if ( -- nready <= 0 ){
                     break;				/* no more readable descriptors */
                 }
             }
@@ -215,7 +219,7 @@ static void process_message( int clientfd, char const* buf, int len ){
 
     if( nl ){
         int partial_pos = nl - buf;// + '\n'
-        syslog( LOG_DEBUG, "nl found at %d pos", partial_pos );
+        // syslog( LOG_DEBUG, "nl found at %d pos", partial_pos );
         nbytes = write( log_fd, buf, partial_pos + 1 );
 
         if( nbytes < 0 ){
@@ -231,7 +235,7 @@ static void process_message( int clientfd, char const* buf, int len ){
             process_message( clientfd, buf + partial_pos + 1, bytes_left );
         }
     }else{
-        syslog( LOG_DEBUG, "nl not found" );
+        // syslog( LOG_DEBUG, "nl not found" );
         nbytes = write( log_fd, buf, len );
 
         if( nbytes < 0 ){
@@ -272,4 +276,53 @@ static void dump_file_to_client( int fd_client ){
         lseek( log_fd, 0, SEEK_SET );
         lseek( log_fd, file_size, SEEK_SET );
     }
+}
+
+static void make_daemon()
+{
+    pid_t pid;
+    
+    /* Fork off the parent process */
+    pid = fork();
+    
+    /* An error occurred */
+    if (pid < 0){
+        syslog( LOG_ERR, "fork failed" );
+        exit(EXIT_FAILURE);
+    }
+    
+     /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    
+    /* On success: The child process becomes session leader */
+    if (setsid() < 0)
+        exit(EXIT_FAILURE);
+    
+    /* Catch, ignore and handle signals */
+    /*TODO: Implement a working signal handler */
+    
+    
+    /* Fork off for the second time*/
+    pid = fork();
+    
+    /* An error occurred */
+    if (pid < 0)
+        exit(EXIT_FAILURE);
+    
+    /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    
+    /* Set new file permissions */
+    umask(0);
+    
+    /* Change the working directory to the root directory */
+    /* or another appropriated directory */
+    chdir("/");
+    
+    /* Close all open file descriptors */
+    close( STDIN_FILENO );
+    close( STDOUT_FILENO );
+    close( STDERR_FILENO );
 }

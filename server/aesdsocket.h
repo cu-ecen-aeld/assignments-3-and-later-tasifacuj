@@ -1,7 +1,7 @@
 #pragma once
 #include <stdbool.h>
 
-bool aesd_initialize( char const* filename );
+bool aesd_initialize( char const* filename, bool is_daemon );
 
 void aesd_run();
 
