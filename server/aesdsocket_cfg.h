@@ -10,3 +10,4 @@
 
 #define SERV_PORT   9000
 #define LOG_PATH    "/var/tmp/aesdsocketdata"
+#define LOG_TIMER_INT   10

@@ -1,13 +1,13 @@
 CFLAGS += -Wall -Werror
-DEPS = aesdsocket.h
+DEPS = aesd_server_thrd.h
 all: aesdsocket 
 
 %.o: %.c $(DEPS)
 	$(CC) -g -c -o $@ $< $(CFLAGS)
 
-aesdsocket: aesdsocket.o main.o
-	$(CC) -o aesdsocket aesdsocket.o main.o 
+aesdsocket: aesd_server_thrd.o main_thrd.o
+	$(CC) -o aesdsocket aesd_server_thrd.o main_thrd.o 
 
 clean:
-	rm -f aesdsocket aesdsocket.o main.o
+	rm -f aesdsocket aesdsocket_thrd.o main_thrd.o
 
