@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <limits.h>		/* for OPEN_MAX */
+#include <poll.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -54,13 +55,16 @@ static pthread_mutex_t      meta_lock;
 timer_t                     timer_id = 0;
 static int                  file_size = 0;
 
-static struct itimerspec its = {   .it_value.tv_sec  = LOG_TIMER_INT,
-                                .it_value.tv_nsec = 0,
-                                .it_interval.tv_sec  = LOG_TIMER_INT,
-                                .it_interval.tv_nsec = 0
-                            };
+// static struct itimerspec its = {   .it_value.tv_sec  = LOG_TIMER_INT,
+//                                 .it_value.tv_nsec = 0,
+//                                 .it_interval.tv_sec  = LOG_TIMER_INT,
+//                                 .it_interval.tv_nsec = 0
+//                             };
 
-static struct sigevent sev = { 0 };
+// static struct sigevent sev = { 0 };
+
+#define POLL_SZ 2
+static struct pollfd clientfds[ POLL_SZ ];
 
 SLIST_HEAD(slisthead, slist_data_s) thrd_head;
 
@@ -73,7 +77,8 @@ static void do_maintenance();
 static void process_message( int clientfd, char const* buf, int len );
 static void dump_file_to_client( int fd );
 static void make_daemon( void );
-static bool start_timer( void );
+static void timer_handler();
+// static bool start_timer( void );
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool aesd_thrd_initialize( char const* filename, bool is_daemon ){
@@ -127,10 +132,12 @@ bool aesd_thrd_initialize( char const* filename, bool is_daemon ){
 
     listen( listenfd, LISTENQ );
     
-    if( !start_timer() ){
-        syslog( LOG_ERR, "Failed to start timer" );
-        return false;
-    }
+    // if( !start_timer() ){
+    //     syslog( LOG_ERR, "Failed to start timer" );
+    //     return false;
+    // }
+    clientfds[0].fd = listenfd;
+    clientfds[0].events = POLLIN;
 
     return true;
 }
@@ -139,7 +146,8 @@ void aesd_thrd_run(){
     syslog( LOG_DEBUG, "> aesd_thrd_run" );
 
     for( ;; ){
-        connfd = accept( listenfd, (SA *) &cliaddr, &clilen );
+        int nready = poll( clientfds, 1, LOG_TIMER_INT * 1000 );
+        
 
         if ( sigint_triggered ) {
             syslog( LOG_DEBUG, "sigint triggered, exiting...\n" );
@@ -150,6 +158,13 @@ void aesd_thrd_run(){
             syslog( LOG_DEBUG, "sigterm triggered\n" );
             break;
         }
+
+        if ( nready == 0 ) {
+            timer_handler();
+            continue;
+        }
+
+        connfd = accept( listenfd, (SA *) &cliaddr, &clilen );
 
         log_remote_peer_name( connfd, true );
         
@@ -200,7 +215,7 @@ void aesd_thrd_shutdown(){
         syslog( LOG_DEBUG, "> Thrd %lu completed.", tid );
     }
 
-    timer_delete( timer_id );
+    // timer_delete( timer_id );
     syslog( LOG_DEBUG, "aesd_thrd_shutdown completed." );
 }
 
@@ -420,7 +435,7 @@ static void make_daemon( void )
     close( STDERR_FILENO );
 }
 
-void thread_handler(union sigval sv) {
+static void timer_handler() {
     time_t anytime;
     struct tm *current;
     char time_str[ 64 ];
@@ -436,21 +451,21 @@ void thread_handler(union sigval sv) {
 
 // https://opensource.com/article/21/10/linux-timers
 // https://stackoverflow.com/questions/55666829/counting-time-with-timer-in-c
-static bool start_timer( void ){
-    memset(&sev, 0, sizeof(struct sigevent));
-    sev.sigev_notify            = SIGEV_THREAD;
-    sev.sigev_notify_function   = &thread_handler;
-    // sev.sigev_value.sival_ptr = &info;
+// static bool start_timer( void ){
+//     memset(&sev, 0, sizeof(struct sigevent));
+//     sev.sigev_notify            = SIGEV_THREAD;
+//     sev.sigev_notify_function   = &timer_handler;
+//     // sev.sigev_value.sival_ptr = &info;
 
-    if( timer_create( CLOCK_REALTIME, &sev, &timer_id ) != 0 ) {
-         syslog( LOG_ERR, "timer_create failed" );
-         return false;
-    }
+//     if( timer_create( CLOCK_REALTIME, &sev, &timer_id ) != 0 ) {
+//          syslog( LOG_ERR, "timer_create failed" );
+//          return false;
+//     }
 
-    if( timer_settime(timer_id, 0, &its, NULL) != 0 ){
-        syslog( LOG_ERR, "timer_settime" );
-        return false;
-    }
+//     if( timer_settime(timer_id, 0, &its, NULL) != 0 ){
+//         syslog( LOG_ERR, "timer_settime" );
+//         return false;
+//     }
 
-    return true;
-}
+//     return true;
+// }
