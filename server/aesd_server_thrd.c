@@ -371,7 +371,12 @@ static void dump_file_to_client( int fd_client ){
             // printf( "> chunk to send (%s)", tmpbuf );
 
             if( rn > 0 ){
-                write( fd_client, tmpbuf, rn );
+                int wr_rc = write( fd_client, tmpbuf, rn );
+
+                if( wr_rc < 0 ){
+                    syslog( LOG_ERR, "> write back failed with %s", strerror( errno ) );
+                }
+
                 bytes_left -= rn;
             }else{
                 syslog( LOG_ERR, "read returned %d, err: %s\n", rn, strerror( errno ) );
@@ -427,7 +432,12 @@ static void make_daemon( void )
     
     /* Change the working directory to the root directory */
     /* or another appropaesdsocketriated directory */
-    chdir("/");
+    int ch_ret = chdir("/");
+
+    if( ch_ret < 0 ){
+        syslog( LOG_ERR, "Failed to change dir" );
+        exit(EXIT_FAILURE);
+    }
     
     /* Close all open file descriptors */
     close( STDIN_FILENO );
