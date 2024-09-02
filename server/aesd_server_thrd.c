@@ -54,6 +54,7 @@ static pthread_mutex_t      write_lock;
 static pthread_mutex_t      meta_lock;
 timer_t                     timer_id = 0;
 static int                  file_size = 0;
+static unsigned             thread_clients = 0;
 
 // static struct itimerspec its = {   .it_value.tv_sec  = LOG_TIMER_INT,
 //                                 .it_value.tv_nsec = 0,
@@ -159,7 +160,7 @@ void aesd_thrd_run(){
             break;
         }
 
-        if ( nready == 0 ) {
+        if ( nready == 0 && thread_clients > 0 ) {
             timer_handler();
             continue;
         }
@@ -268,6 +269,7 @@ static void add_thread( struct ThreadData* td ){
     slist_data_t* datap = malloc(sizeof(slist_data_t));
     datap->td = td;
     SLIST_INSERT_HEAD( &thrd_head, datap, entries );
+    thread_clients ++;
 }
 
 // https://man.archlinux.org/man/core/man-pages/SLIST_REMOVE.3.en
@@ -286,6 +288,7 @@ static void do_maintenance(){
             free( td );
             free( item );
             syslog( LOG_DEBUG, "> Thrd %lu completed.", tid );
+            thread_clients --;
         }
     }
 }
