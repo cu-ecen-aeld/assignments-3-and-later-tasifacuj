@@ -54,12 +54,12 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
+    char const* old_buff = NULL;
+
     size_t idx = buffer->in_offs % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-    struct aesd_buffer_entry * e = &( buffer->entry[ idx ] );
-    e->buffptr = add_entry->buffptr;
-    e->size = add_entry->size;
+    struct aesd_buffer_entry * e = &( buffer->entry[ idx ] );    
 
     if( buffer->out_offs == buffer->in_offs - AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ){
         buffer->full = true;
@@ -67,11 +67,20 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
         buffer->full = false;
     }
 
+    if( buffer->full ){
+        old_buff = e->buffptr;
+    }
+
+    e->buffptr = add_entry->buffptr;
+    e->size = add_entry->size;
+
     buffer->in_offs ++;
 
     if( buffer->full ){
         buffer->out_offs ++;
     }
+
+    return old_buff;
 }
 
 /**
