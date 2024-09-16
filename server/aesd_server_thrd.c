@@ -78,7 +78,9 @@ static void do_maintenance();
 static void process_message( int clientfd, char const* buf, int len );
 static void dump_file_to_client( int fd );
 static void make_daemon( void );
+#ifndef USE_AESD_CHAR_DEVICE
 static void timer_handler();
+#endif
 // static bool start_timer( void );
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -101,12 +103,13 @@ bool aesd_thrd_initialize( char const* filename, bool is_daemon ){
     SLIST_INIT( &thrd_head );
 
     filename_ = filename;
-    log_fd = open( filename, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR );
+    syslog( LOG_DEBUG, "> open %s\n", filename_ );
+    // log_fd = open( filename, O_RDWR, S_IRUSR | S_IWUSR );
 
-    if( log_fd < 0 ){
-        syslog( LOG_ERR, "Cannot create %s, err: %s\n", filename, strerror( errno ) );
-        return false;
-    }
+    // if( log_fd < 0 ){
+    //     syslog( LOG_ERR, "Cannot create %s, err: %s\n", filename, strerror( errno ) );
+    //     return false;
+    // }
 
     listenfd = socket( AF_INET, SOCK_STREAM, 0 );
 
@@ -160,31 +163,34 @@ void aesd_thrd_run(){
             break;
         }
 
+#ifndef USE_AESD_CHAR_DEVICE
         if ( nready == 0 && thread_clients > 0 ) {
             timer_handler();
             continue;
         }
+#endif
+        if( nready > 0 ){
+            connfd = accept( listenfd, (SA *) &cliaddr, &clilen );
 
-        connfd = accept( listenfd, (SA *) &cliaddr, &clilen );
+            log_remote_peer_name( connfd, true );
+            
+            struct ThreadData* thrd = ( struct ThreadData* )malloc( sizeof( struct ThreadData) );
+            thrd->write_lock     = &write_lock;
+            thrd->fd            = connfd;
+            thrd->is_completed  = 0;
+            
+            int rc = pthread_create( &thrd->p_tid, NULL, connection_handler, thrd ); 
 
-        log_remote_peer_name( connfd, true );
-        
-        struct ThreadData* thrd = ( struct ThreadData* )malloc( sizeof( struct ThreadData) );
-        thrd->write_lock     = &write_lock;
-        thrd->fd            = connfd;
-        thrd->is_completed  = 0;
-        
-        int rc = pthread_create( &thrd->p_tid, NULL, connection_handler, thrd ); 
+            if( rc != 0 ){
+                syslog( LOG_ERR, "> Failed to create connection handler thread" );
+                close( connfd );
+                free( thrd );
+            }else{
+                add_thread( thrd );
+            }
 
-        if( rc != 0 ){
-            syslog( LOG_ERR, "> Failed to create connection handler thread" );
-            close( connfd );
-            free( thrd );
-        }else{
-            add_thread( thrd );
+            do_maintenance();
         }
-
-        do_maintenance();
     }
 }
 
@@ -199,7 +205,7 @@ void aesd_thrd_signal_triggered( int sig ){
 }
 
 void aesd_thrd_shutdown(){
-    close( log_fd );
+    // close( log_fd );
     close( listenfd );
     remove( filename_ );
     pthread_mutex_destroy( &write_lock );
@@ -244,7 +250,7 @@ void* connection_handler( void* arg ){
     int n;
 
     for( ;; ){
-        if ( ( n = read( td->fd, buf, MAXLINE ) ) < 0 ) {
+        if ( ( n = read( td->fd, buf, MAXLINE - 1 ) ) < 0 ) {
             /* connection reset by client */
             close( td->fd );
             td->is_completed = 1;
@@ -301,8 +307,16 @@ static int write_safe( char const* buf, int len ){
         return -1;
     }
 
+    log_fd = open( filename_, O_RDWR, S_IRUSR | S_IWUSR );
+
+    if( log_fd < 0 ){
+        syslog( LOG_ERR, "Cannot create %s, err: %s\n", filename_, strerror( errno ) );
+        return -1;
+    }
+
     int nbytes = write( log_fd, buf, len );
     pthread_mutex_unlock( &write_lock );
+    close( log_fd );
     return nbytes;
 }
 
@@ -314,37 +328,20 @@ static void process_message( int clientfd, char const* buf, int len ){
         }
 
         syslog( LOG_DEBUG, "> process_message %s, %d\n", buf, len );
-        // printf( "> process_message %s, %d\n", buf, len );
         int nbytes;
+
+        nbytes = write_safe( buf, len );
+
+        if( nbytes < 0 ){
+            syslog( LOG_ERR, "Failed to write log data, err: %s\n", strerror( errno ) );
+            break;
+        }
+
+        file_size += len;
         char const* nl = strchr( buf, '\n' );
 
         if( nl ){
-            int partial_pos = nl - buf;// + '\n'
-            // syslog( LOG_DEBUG, "nl found at %d pos", partial_pos );
-            nbytes = write_safe( buf, partial_pos + 1 );
-
-            if( nbytes < 0 ){
-                syslog( LOG_ERR, "Failed to write log data, err: %s\n", strerror( errno ) );
-                break;
-            }
-
-            file_size += partial_pos + 1;
             dump_file_to_client( clientfd );
-            int bytes_left = len - ( partial_pos + 1 );
-
-            if( bytes_left > 0 ){
-                process_message( clientfd, buf + partial_pos + 1, bytes_left );
-            }
-        }else{
-            // syslog( LOG_DEBUG, "nl not found" );
-            nbytes = write_safe( buf, len );
-
-            if( nbytes < 0 ){
-                syslog( LOG_ERR, "Failed to write log data, err: %s\n", strerror( errno ) );
-                break;
-            }
-
-            // file_size += len;
         }   
     }while( 0 );
 }
@@ -357,23 +354,33 @@ static void dump_file_to_client( int fd_client ){
         return;
     }
 
-    fsync( log_fd );
-    rc = lseek( log_fd, 0, SEEK_SET );
+    log_fd = open( filename_, O_RDWR, S_IRUSR | S_IWUSR );
 
-    if( rc < 0 ){
-        syslog( LOG_ERR, "Failed to seek to file start" );
-    }else{
+    if( log_fd < 0 ){
+        syslog( LOG_ERR, "Cannot create %s, err: %s\n", filename_, strerror( errno ) );
+        pthread_mutex_unlock( &write_lock );
+        return;
+    }
+
+    // fsync( log_fd );
+    // rc = lseek( log_fd, 0, SEEK_SET );
+
+    // if( rc < 0 ){
+    //     syslog( LOG_ERR, "Failed to seek to file start" );
+    // }else
+    {
         int bytes_left = file_size;
+        int rn = 0;
 
-        while( bytes_left > 0 ){
+        do{
             char tmpbuf[ BUFFSIZE ];
             memset( tmpbuf, 0, sizeof( tmpbuf ) );
-            int rn = read( log_fd, tmpbuf, sizeof( tmpbuf ) );
+            rn = read( log_fd, tmpbuf, sizeof( tmpbuf ) );
             // tmpbuf[rn ] = '\0';
             syslog( LOG_DEBUG, "> dump_file_to_client: file_size = %d, bytes_left = %d, read chunk = %d\n", file_size, bytes_left, rn );
-            // printf( "> chunk to send (%s)", tmpbuf );
 
             if( rn > 0 ){
+                // printf( "> chunk to send (%s)\n", tmpbuf );
                 int wr_rc = write( fd_client, tmpbuf, rn );
 
                 if( wr_rc < 0 ){
@@ -385,10 +392,11 @@ static void dump_file_to_client( int fd_client ){
                 syslog( LOG_ERR, "read returned %d, err: %s\n", rn, strerror( errno ) );
                 break;//????
             }
-        }
+        }while( rn > 0 );
 
-        lseek( log_fd, 0, SEEK_SET );
-        lseek( log_fd, file_size, SEEK_SET );
+        // lseek( log_fd, 0, SEEK_SET );
+        // lseek( log_fd, file_size, SEEK_SET );
+        close( log_fd );
     }
 
     pthread_mutex_unlock( &write_lock );
@@ -448,6 +456,7 @@ static void make_daemon( void )
     close( STDERR_FILENO );
 }
 
+#ifndef USE_AESD_CHAR_DEVICE
 static void timer_handler() {
     time_t anytime;
     struct tm *current;
@@ -461,7 +470,7 @@ static void timer_handler() {
     write_safe( time_str, strlen( time_str ) );
     // domaintenace = true;
 }
-
+#endif
 // https://opensource.com/article/21/10/linux-timers
 // https://stackoverflow.com/questions/55666829/counting-time-with-timer-in-c
 // static bool start_timer( void ){

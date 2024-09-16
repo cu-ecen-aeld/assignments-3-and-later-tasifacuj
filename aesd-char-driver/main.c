@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/slab.h>         // kmalloc()
 
 #include "aesdchar.h"
 #include "aesd-circular-buffer.h"
@@ -85,8 +86,11 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos){
     size_t wr_len = 0;
+    char* wbuff;
+    size_t i;
+
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    char* wbuff = kmalloc( count, GFP_KERNEL );
+    wbuff = kmalloc( count, GFP_KERNEL );
 
     if( !wbuff ){
         return -ENOMEM;
@@ -102,7 +106,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         return -ERESTARTSYS;
     }
 
-    for( size_t i = 0; i < count; i ++ ){
+    for( i = 0; i < count; i ++ ){
         char* b = krealloc( g_buff, g_len + 1, GFP_KERNEL );
 
         if( !b ){
@@ -183,13 +187,13 @@ int aesd_init_module(void)
     return result;
 }
 
-void aesd_cleanup_module(void)
-{
+void aesd_cleanup_module(void){
+    size_t i;
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_del(&aesd_device.cdev);
 
-    for( size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i ++ ){
+    for( i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i ++ ){
         if( circular_buf.entry[ i ].buffptr ){
             kfree( circular_buf.entry[ i ].buffptr );
             circular_buf.entry[ i ].buffptr = NULL;

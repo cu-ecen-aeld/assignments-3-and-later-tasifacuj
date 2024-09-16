@@ -9,5 +9,11 @@
 
 
 #define SERV_PORT   9000
-#define LOG_PATH    "/var/tmp/aesdsocketdata"
 #define LOG_TIMER_INT   10
+#define USE_AESD_CHAR_DEVICE 1
+
+#ifdef USE_AESD_CHAR_DEVICE
+    #define LOG_PATH "/dev/aesdchar"
+#else
+    #define LOG_PATH  "/var/tmp/aesdsocketdata"
+#endif
