@@ -1,6 +1,7 @@
 #include "aesd_server_thrd.h"
 #include "aesdsocket_cfg.h"
 #include "slist/queue.h"
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #include <string.h>
 #include <sys/socket.h>	/* basic socket definitions */
@@ -56,14 +57,6 @@ timer_t                     timer_id = 0;
 static int                  file_size = 0;
 static unsigned             thread_clients = 0;
 
-// static struct itimerspec its = {   .it_value.tv_sec  = LOG_TIMER_INT,
-//                                 .it_value.tv_nsec = 0,
-//                                 .it_interval.tv_sec  = LOG_TIMER_INT,
-//                                 .it_interval.tv_nsec = 0
-//                             };
-
-// static struct sigevent sev = { 0 };
-
 #define POLL_SZ 2
 static struct pollfd clientfds[ POLL_SZ ];
 
@@ -78,6 +71,8 @@ static void do_maintenance();
 static void process_message( int clientfd, char const* buf, int len );
 static void dump_file_to_client( int fd );
 static void make_daemon( void );
+static bool parse_aesdchar_ioseek( char const* buffer, unsigned int *write_cmd, unsigned int *write_cmd_offset );
+
 #ifndef USE_AESD_CHAR_DEVICE
 static void timer_handler();
 #endif
@@ -327,22 +322,64 @@ static void process_message( int clientfd, char const* buf, int len ){
             break;
         }
 
-        syslog( LOG_DEBUG, "> process_message %s, %d\n", buf, len );
-        int nbytes;
+        unsigned seek_cmd, seek_off;
 
-        nbytes = write_safe( buf, len );
+        if( parse_aesdchar_ioseek( buf, &seek_cmd, &seek_off ) ){
+            struct aesd_seekto seek_to_cmd = {
+                .write_cmd = seek_cmd,
+                .write_cmd_offset = seek_off
+            };
 
-        if( nbytes < 0 ){
-            syslog( LOG_ERR, "Failed to write log data, err: %s\n", strerror( errno ) );
-            break;
+            syslog( LOG_DEBUG, "seek_cmd: %u, seek_off: %u", seek_cmd, seek_off );
+            log_fd = open( filename_, O_RDWR );
+
+            if( log_fd < 0 ){
+                syslog( LOG_ERR, "Cannot open ioctl %s, err: %s\n", filename_, strerror( errno ) );
+                return;
+            }
+
+            if( ioctl( log_fd, AESDCHAR_IOCSEEKTO, &seek_to_cmd ) == -1 ){
+                syslog( LOG_ERR, "> Failed to send AESDCHAR_IOCSEEKTO command - %s", strerror( errno ) );
+            }else{
+                int rn;
+
+                do{
+                    char tmpbuf[ BUFFSIZE ];
+                    memset( tmpbuf, 0, sizeof( tmpbuf ) );
+                    rn = read( log_fd, tmpbuf, sizeof( tmpbuf ) );
+                    // tmpbuf[rn ] = '\0';
+                    syslog( LOG_DEBUG, ">> seek dump_file_to_client: buf = %s\n", tmpbuf );
+
+                    if( rn > 0 ){
+                        // printf( "> chunk to send (%s)\n", tmpbuf );
+                        int wr_rc = write( clientfd, tmpbuf, rn );
+
+                        if( wr_rc < 0 ){
+                            syslog( LOG_ERR, "> write back failed with %s", strerror( errno ) );
+                        }
+                    }
+                }while( rn > 0 );
+            }
+
+            close( log_fd );
+        }else{
+            syslog( LOG_DEBUG, "> process_message %s, %d\n", buf, len );
+            int nbytes;
+
+            nbytes = write_safe( buf, len );
+
+            if( nbytes < 0 ){
+                syslog( LOG_ERR, "Failed to write log data, err: %s\n", strerror( errno ) );
+                break;
+            }
+
+            file_size += len;
+            char const* nl = strchr( buf, '\n' );
+
+            if( nl ){
+                dump_file_to_client( clientfd );
+            }   
         }
-
-        file_size += len;
-        char const* nl = strchr( buf, '\n' );
-
-        if( nl ){
-            dump_file_to_client( clientfd );
-        }   
     }while( 0 );
 }
 
@@ -471,6 +508,10 @@ static void timer_handler() {
     // domaintenace = true;
 }
 #endif
+
+static bool parse_aesdchar_ioseek( char const* buffer, unsigned int *write_cmd, unsigned int *write_cmd_offset ){
+    return sscanf( buffer, "AESDCHAR_IOCSEEKTO:%u,%u", write_cmd, write_cmd_offset ) == 2;
+}
 // https://opensource.com/article/21/10/linux-timers
 // https://stackoverflow.com/questions/55666829/counting-time-with-timer-in-c
 // static bool start_timer( void ){

@@ -90,3 +90,58 @@ void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 {
     memset(buffer,0,sizeof(struct aesd_circular_buffer));
 }
+
+size_t aesd_circular_buffer_size( struct aesd_circular_buffer *buffer ){
+    size_t sz = 0;
+    int i = 0;
+
+    for( ; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i ++ ){
+        struct aesd_buffer_entry* e = &( buffer->entry[ i ] );
+
+        if( e->buffptr ){
+            sz += e->size;
+        }else{
+            break;
+        }
+    }
+
+    return sz;
+}
+
+size_t aesd_circullar_buffer_size( struct aesd_circular_buffer* buffer ){
+    size_t sz = 0;
+    int i = 0;
+
+    for( ; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i ++ ){
+        struct aesd_buffer_entry* e = &( buffer->entry[ i ] );
+
+        if( e->buffptr ){
+            sz ++;
+        }else{
+            break;
+        }
+    }
+
+    return sz;
+}
+
+size_t aesd_circular_buffer_seek( struct aesd_circular_buffer* buffer, uint32_t command ){
+    size_t off = 0;
+    int i = 0;
+
+    if( command >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ){
+        return off;
+    }
+
+    for( ; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i ++ ){
+        struct aesd_buffer_entry* e = &( buffer->entry[ i ] );
+
+        if( !e->buffptr || i == command ){
+            break;
+        }else{
+            off += e->size;
+        }
+    }
+
+    return off;
+}
